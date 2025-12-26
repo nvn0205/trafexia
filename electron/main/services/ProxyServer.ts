@@ -426,35 +426,38 @@ export class ProxyServer extends EventEmitter {
 
       proxyRes.on('end', async () => {
         const duration = Date.now() - startTime;
-        let bodyBuffer = Buffer.concat(responseBody);
+        // Keep original compressed body for forwarding to client
+        const originalBodyBuffer = Buffer.concat(responseBody);
         const contentType = proxyRes.headers['content-type'] || '';
         const contentEncoding = proxyRes.headers['content-encoding'] || '';
 
-        // Decompress if needed
+        // Decompress a copy for database storage only
+        let decompressedBuffer = originalBodyBuffer;
         try {
           if (contentEncoding === 'gzip') {
-            bodyBuffer = zlib.gunzipSync(bodyBuffer);
+            decompressedBuffer = zlib.gunzipSync(originalBodyBuffer);
           } else if (contentEncoding === 'deflate') {
-            bodyBuffer = zlib.inflateSync(bodyBuffer);
+            decompressedBuffer = zlib.inflateSync(originalBodyBuffer);
           } else if (contentEncoding === 'br') {
-            bodyBuffer = zlib.brotliDecompressSync(bodyBuffer);
+            decompressedBuffer = zlib.brotliDecompressSync(originalBodyBuffer);
           }
         } catch (e) {
           console.error('[ProxyServer] Decompression error:', e);
           // Keep original buffer if decompression fails
+          decompressedBuffer = originalBodyBuffer;
         }
 
-        // Update database
+        // Update database with decompressed content
         const maxSize = 5 * 1024 * 1024;
         let bodyStr: string | null = null;
-        if (bodyBuffer.length <= maxSize) {
+        if (decompressedBuffer.length <= maxSize) {
           try {
-            bodyStr = bodyBuffer.toString('utf-8');
+            bodyStr = decompressedBuffer.toString('utf-8');
           } catch {
             bodyStr = '[Binary data]';
           }
         } else {
-          bodyStr = `[Body too large: ${bodyBuffer.length} bytes]`;
+          bodyStr = `[Body too large: ${decompressedBuffer.length} bytes]`;
         }
 
         const resHeaders: Record<string, string> = {};
@@ -469,7 +472,7 @@ export class ProxyServer extends EventEmitter {
           responseBody: bodyStr,
           contentType,
           duration,
-          size: bodyBuffer.length,
+          size: originalBodyBuffer.length, // Use original size
         });
 
         const completeRequest = this.storage.getRequestById(requestId);
@@ -477,19 +480,33 @@ export class ProxyServer extends EventEmitter {
           this.emit('request:complete', completeRequest);
         }
 
-        // Send response to client
+        // Send response to client - use original compressed body
+        // Check if socket is still writable
+        if (!clientSocket.writable || clientSocket.destroyed) {
+          console.error('[ProxyServer] Client socket is not writable, skipping response');
+          return;
+        }
+
         let responseHead = `HTTP/1.1 ${proxyRes.statusCode} ${proxyRes.statusMessage || ''}\r\n`;
         for (const [key, value] of Object.entries(proxyRes.headers)) {
+          // Skip Transfer-Encoding header as we're sending complete body
+          if (key.toLowerCase() === 'transfer-encoding') continue;
           if (typeof value === 'string') {
             responseHead += `${key}: ${value}\r\n`;
           } else if (Array.isArray(value)) {
             value.forEach(v => responseHead += `${key}: ${v}\r\n`);
           }
         }
+        // Update Content-Length to match actual body size
+        responseHead += `Content-Length: ${originalBodyBuffer.length}\r\n`;
         responseHead += '\r\n';
 
-        clientSocket.write(responseHead);
-        clientSocket.write(bodyBuffer);
+        try {
+          clientSocket.write(responseHead);
+          clientSocket.write(originalBodyBuffer);
+        } catch (err) {
+          console.error('[ProxyServer] Error writing response to client:', err);
+        }
       });
     });
 
