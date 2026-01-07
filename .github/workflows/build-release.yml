@@ -99,8 +99,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-git tag v1.0.3
-git push origin v1.0.3
