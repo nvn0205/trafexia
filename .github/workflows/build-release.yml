@@ -48,7 +48,7 @@ jobs:
         continue-on-error: true
 
       - name: Build Electron app
-        run: npm run build:${{ matrix.platform }}
+        run: npm run build:${{ matrix.platform }} -- --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Disable code signing for CI builds
