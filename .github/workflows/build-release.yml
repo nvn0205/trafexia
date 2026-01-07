@@ -54,6 +54,11 @@ jobs:
           # Disable code signing for CI builds
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      - name: List build output (Debug)
+        run: |
+          ls -R release/ || echo "release/ not found"
+          ls -R dist/ || echo "dist/ not found"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -65,7 +70,12 @@ jobs:
             release/*.AppImage
             release/*.deb
             release/*-portable.exe
-          if-no-files-found: ignore
+            dist/*.dmg
+            dist/*.zip
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: warn
 
   release:
     needs: build
@@ -91,3 +101,6 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+git tag v1.0.3
+git push origin v1.0.3
